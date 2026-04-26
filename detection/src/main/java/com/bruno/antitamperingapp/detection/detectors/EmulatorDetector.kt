@@ -94,30 +94,30 @@ class EmulatorDetector : TamperDetector {
     ) {
         SafeExec.runCatching("build_properties", name, errors) {
             val checks = listOf(
-                BuildCheck("build_hardware", "Build.HARDWARE", Build.HARDWARE) {
+                BuildCheck(CHECK_BUILD_HARDWARE, "Build.HARDWARE", Build.HARDWARE) {
                     it.equals("ranchu", ignoreCase = true) ||
                         it.equals("goldfish", ignoreCase = true)
                 },
-                BuildCheck("build_fingerprint", "Build.FINGERPRINT", Build.FINGERPRINT) {
+                BuildCheck(CHECK_BUILD_FINGERPRINT, "Build.FINGERPRINT", Build.FINGERPRINT) {
                     it.contains("sdk_gphone", ignoreCase = true) ||
                         it.contains("generic/", ignoreCase = true) ||
                         it.startsWith("generic", ignoreCase = true)
                 },
-                BuildCheck("build_device", "Build.DEVICE", Build.DEVICE) {
+                BuildCheck(CHECK_BUILD_DEVICE, "Build.DEVICE", Build.DEVICE) {
                     it.contains("emu64", ignoreCase = true) ||
                         it.equals("generic", ignoreCase = true)
                 },
-                BuildCheck("build_model", "Build.MODEL", Build.MODEL) {
+                BuildCheck(CHECK_BUILD_MODEL, "Build.MODEL", Build.MODEL) {
                     it.contains("sdk_gphone", ignoreCase = true) ||
                         it.contains("Android SDK built for", ignoreCase = true) ||
                         it.contains("google_sdk", ignoreCase = true)
                 },
-                BuildCheck("build_product", "Build.PRODUCT", Build.PRODUCT) {
+                BuildCheck(CHECK_BUILD_PRODUCT, "Build.PRODUCT", Build.PRODUCT) {
                     it.contains("sdk_gphone", ignoreCase = true) ||
                         it.contains("sdk_phone", ignoreCase = true) ||
                         it.equals("sdk", ignoreCase = true)
                 },
-                BuildCheck("build_manufacturer", "Build.MANUFACTURER", Build.MANUFACTURER) {
+                BuildCheck(CHECK_BUILD_MANUFACTURER, "Build.MANUFACTURER", Build.MANUFACTURER) {
                     it.equals("Genymotion", ignoreCase = true)
                 },
                 // NOTE: Build.TYPE and Build.TAGS were intentionally excluded.
@@ -153,28 +153,34 @@ class EmulatorDetector : TamperDetector {
         evidence: MutableList<Evidence>,
         errors: MutableList<DetectionError>,
     ) {
-        val props = listOf(
-            "ro.kernel.qemu" to "1",
-            "ro.hardware" to "ranchu",
-            "init.svc.qemud" to "running",
-            "ro.kernel.android.qemud" to null, // any non-empty value is suspicious
+        data class SysPropCheck(
+            val checkName: String,
+            val propName: String,
+            val suspiciousValue: String?, // null = any non-empty value is suspicious
         )
 
-        for ((propName, suspiciousValue) in props) {
-            SafeExec.runCatching("sysprop_$propName", name, errors) {
-                val value = getSystemProperty(propName)
-                val suspicious = if (suspiciousValue != null) {
-                    value.equals(suspiciousValue, ignoreCase = true)
+        val props = listOf(
+            SysPropCheck(CHECK_SYSPROP_QEMU, "ro.kernel.qemu", "1"),
+            SysPropCheck(CHECK_SYSPROP_HARDWARE, "ro.hardware", "ranchu"),
+            SysPropCheck(CHECK_SYSPROP_QEMUD, "init.svc.qemud", "running"),
+            SysPropCheck(CHECK_SYSPROP_QEMUD_DEV, "ro.kernel.android.qemud", null),
+        )
+
+        for (prop in props) {
+            SafeExec.runCatching(prop.checkName, name, errors) {
+                val value = getSystemProperty(prop.propName)
+                val suspicious = if (prop.suspiciousValue != null) {
+                    value.equals(prop.suspiciousValue, ignoreCase = true)
                 } else {
                     value.isNotEmpty()
                 }
                 evidence.add(
                     Evidence(
-                        checkName = "sysprop_${propName.replace(".", "_")}",
+                        checkName = prop.checkName,
                         description = if (suspicious) {
-                            "System property '$propName' = '$value' indicates emulator"
+                            "System property '${prop.propName}' = '$value' indicates emulator"
                         } else {
-                            "System property '$propName' appears normal"
+                            "System property '${prop.propName}' appears normal"
                         },
                         rawValue = value.ifEmpty { "(empty)" },
                         suspicious = suspicious,
@@ -209,11 +215,11 @@ class EmulatorDetector : TamperDetector {
             }
 
             val sensorsToCheck = listOf(
-                Sensor.TYPE_ACCELEROMETER to "Accelerometer",
-                Sensor.TYPE_GYROSCOPE to "Gyroscope",
+                Triple(Sensor.TYPE_ACCELEROMETER, "Accelerometer", CHECK_SENSOR_STRING_ACCEL),
+                Triple(Sensor.TYPE_GYROSCOPE, "Gyroscope", CHECK_SENSOR_STRING_GYRO),
             )
 
-            for ((type, label) in sensorsToCheck) {
+            for ((type, label, checkName) in sensorsToCheck) {
                 val sensor = sensorManager.getDefaultSensor(type)
                 if (sensor != null) {
                     val sensorName = sensor.name ?: ""
@@ -223,7 +229,7 @@ class EmulatorDetector : TamperDetector {
                     val suspicious = nameGoldfish || vendorAosp
                     evidence.add(
                         Evidence(
-                            checkName = "sensor_string_${label.lowercase()}",
+                            checkName = checkName,
                             description = if (suspicious) {
                                 "$label sensor '$sensorName' by '$sensorVendor' is emulated"
                             } else {
@@ -253,15 +259,15 @@ class EmulatorDetector : TamperDetector {
                 ?: return@runCatching
 
             val sensorsExpectedOnRealDevices = listOf(
-                Sensor.TYPE_STEP_COUNTER to "Step Counter",
-                Sensor.TYPE_SIGNIFICANT_MOTION to "Significant Motion",
+                Triple(Sensor.TYPE_STEP_COUNTER, "Step Counter", CHECK_SENSOR_ABSENCE_STEP),
+                Triple(Sensor.TYPE_SIGNIFICANT_MOTION, "Significant Motion", CHECK_SENSOR_ABSENCE_MOTION),
             )
 
-            for ((type, label) in sensorsExpectedOnRealDevices) {
+            for ((type, label, checkName) in sensorsExpectedOnRealDevices) {
                 val present = sensorManager.getDefaultSensor(type) != null
                 evidence.add(
                     Evidence(
-                        checkName = "sensor_absence_${label.lowercase().replace(" ", "_")}",
+                        checkName = checkName,
                         description = if (present) {
                             "$label sensor present (expected on real devices)"
                         } else {
@@ -310,17 +316,17 @@ class EmulatorDetector : TamperDetector {
 
             val sensorsToSample = buildList {
                 sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
-                    add(SensorSamplingTarget(it, "accelerometer", ACCEL_NOISE_THRESHOLD))
+                    add(SensorSamplingTarget(it, "accelerometer", ACCEL_NOISE_THRESHOLD, CHECK_SENSOR_NOISE_ACCEL))
                 }
                 sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let {
-                    add(SensorSamplingTarget(it, "gyroscope", GYRO_NOISE_THRESHOLD))
+                    add(SensorSamplingTarget(it, "gyroscope", GYRO_NOISE_THRESHOLD, CHECK_SENSOR_NOISE_GYRO))
                 }
             }
 
             if (sensorsToSample.isEmpty()) {
                 evidence.add(
                     Evidence(
-                        checkName = "sensor_noise",
+                        checkName = CHECK_SENSOR_NOISE_ACCEL,
                         description = "No accelerometer or gyroscope available for noise analysis",
                         rawValue = null,
                         suspicious = true,
@@ -349,7 +355,7 @@ class EmulatorDetector : TamperDetector {
         if (samples.size < MIN_SAMPLES_FOR_ANALYSIS) {
             evidence.add(
                 Evidence(
-                    checkName = "sensor_noise_${target.label}",
+                    checkName = target.checkName,
                     description = "Insufficient ${target.label} samples for noise analysis " +
                         "(${samples.size}/${MIN_SAMPLES_FOR_ANALYSIS} required)",
                     rawValue = samples.size.toString(),
@@ -367,7 +373,7 @@ class EmulatorDetector : TamperDetector {
 
         evidence.add(
             Evidence(
-                checkName = "sensor_noise_${target.label}",
+                checkName = target.checkName,
                 description = if (suspicious) {
                     "${target.label.replaceFirstChar { it.uppercase() }} noise too low " +
                         "(avg stddev=${"%.6f".format(avgStdDev)}). " +
@@ -507,7 +513,7 @@ class EmulatorDetector : TamperDetector {
             if (intent == null) {
                 evidence.add(
                     Evidence(
-                        checkName = "battery_profile",
+                        checkName = CHECK_BATTERY_PROFILE,
                         description = "Could not read battery status",
                         rawValue = null,
                         suspicious = false,
@@ -530,7 +536,7 @@ class EmulatorDetector : TamperDetector {
 
             evidence.add(
                 Evidence(
-                    checkName = "battery_temperature",
+                    checkName = CHECK_BATTERY_TEMP,
                     description = if (tempSuspicious) {
                         "Battery temperature is 0 (0.0°C) — indicates emulator"
                     } else {
@@ -542,7 +548,7 @@ class EmulatorDetector : TamperDetector {
             )
             evidence.add(
                 Evidence(
-                    checkName = "battery_voltage",
+                    checkName = CHECK_BATTERY_VOLTAGE,
                     description = if (voltageSuspicious) {
                         "Battery voltage is 0 mV — no real battery reports this"
                     } else {
@@ -554,7 +560,7 @@ class EmulatorDetector : TamperDetector {
             )
             evidence.add(
                 Evidence(
-                    checkName = "battery_profile",
+                    checkName = CHECK_BATTERY_PROFILE,
                     description = "Battery: level=$level%, status=$status, " +
                         "plugged=$plugged, present=$present",
                     rawValue = "level=$level status=$status plugged=$plugged present=$present",
@@ -580,7 +586,7 @@ class EmulatorDetector : TamperDetector {
                 if (renderer == null) {
                     evidence.add(
                         Evidence(
-                            checkName = "gl_renderer",
+                            checkName = CHECK_GL_RENDERER,
                             description = "Could not query GL renderer (EGL context creation failed)",
                             rawValue = null,
                             suspicious = false,
@@ -595,7 +601,7 @@ class EmulatorDetector : TamperDetector {
 
                 evidence.add(
                     Evidence(
-                        checkName = "gl_renderer",
+                        checkName = CHECK_GL_RENDERER,
                         description = if (suspicious) {
                             "GL renderer '$renderer' indicates emulator"
                         } else {
@@ -714,7 +720,7 @@ class EmulatorDetector : TamperDetector {
                 val exists = File(path).exists()
                 evidence.add(
                     Evidence(
-                        checkName = "file_artifact",
+                        checkName = CHECK_FILE_ARTIFACT,
                         description = if (exists) {
                             "$description found at '$path'"
                         } else {
@@ -768,7 +774,7 @@ class EmulatorDetector : TamperDetector {
 
             evidence.add(
                 Evidence(
-                    checkName = "telephony_network_operator",
+                    checkName = CHECK_TELEPHONY_NETWORK,
                     description = if (networkSuspicious) {
                         "Network operator name is 'Android' — emulator default"
                     } else if (networkOp.isEmpty()) {
@@ -782,7 +788,7 @@ class EmulatorDetector : TamperDetector {
             )
             evidence.add(
                 Evidence(
-                    checkName = "telephony_sim_operator",
+                    checkName = CHECK_TELEPHONY_SIM,
                     description = if (simSuspicious) {
                         "SIM operator name is 'Android' — emulator default"
                     } else if (simOp.isEmpty()) {
@@ -882,6 +888,7 @@ class EmulatorDetector : TamperDetector {
         val sensor: Sensor,
         val label: String,
         val noiseThreshold: Float,
+        val checkName: String,
     )
 
     companion object {
@@ -904,28 +911,81 @@ class EmulatorDetector : TamperDetector {
             "Translator",
         )
 
+        // ── Check name constants ──
+        // Single source of truth for all check identifiers.
+        // Used in both evidence creation and signal classification.
+
+        // Build properties (Check 1)
+        private const val CHECK_BUILD_HARDWARE = "build_hardware"
+        private const val CHECK_BUILD_FINGERPRINT = "build_fingerprint"
+        private const val CHECK_BUILD_DEVICE = "build_device"
+        private const val CHECK_BUILD_MODEL = "build_model"
+        private const val CHECK_BUILD_PRODUCT = "build_product"
+        private const val CHECK_BUILD_MANUFACTURER = "build_manufacturer"
+
+        // System properties (Check 2)
+        private const val CHECK_SYSPROP_QEMU = "sysprop_ro_kernel_qemu"
+        private const val CHECK_SYSPROP_HARDWARE = "sysprop_ro_hardware"
+        private const val CHECK_SYSPROP_QEMUD = "sysprop_init_svc_qemud"
+        private const val CHECK_SYSPROP_QEMUD_DEV = "sysprop_ro_kernel_android_qemud"
+
+        // Sensor strings (Check 3)
+        private const val CHECK_SENSOR_STRING_ACCEL = "sensor_string_accelerometer"
+        private const val CHECK_SENSOR_STRING_GYRO = "sensor_string_gyroscope"
+
+        // Sensor absence (Check 4)
+        private const val CHECK_SENSOR_ABSENCE_STEP = "sensor_absence_step_counter"
+        private const val CHECK_SENSOR_ABSENCE_MOTION = "sensor_absence_significant_motion"
+
+        // Sensor noise (Check 5)
+        private const val CHECK_SENSOR_NOISE_ACCEL = "sensor_noise_accelerometer"
+        private const val CHECK_SENSOR_NOISE_GYRO = "sensor_noise_gyroscope"
+
+        // Battery (Check 6)
+        private const val CHECK_BATTERY_TEMP = "battery_temperature"
+        private const val CHECK_BATTERY_VOLTAGE = "battery_voltage"
+        private const val CHECK_BATTERY_PROFILE = "battery_profile"
+
+        // GL renderer (Check 7)
+        private const val CHECK_GL_RENDERER = "gl_renderer"
+
+        // File artifacts (Check 8)
+        private const val CHECK_FILE_ARTIFACT = "file_artifact"
+
+        // Telephony (Check 9)
+        private const val CHECK_TELEPHONY_NETWORK = "telephony_network_operator"
+        private const val CHECK_TELEPHONY_SIM = "telephony_sim_operator"
+
+        // ── Soft signal group prefixes ──
+        // Used for grouping evidence in the weighted scoring (Tier 2).
+        private const val GROUP_BUILD = "build_"
+        private const val GROUP_SYSPROP = "sysprop_"
+        private const val GROUP_SENSOR_ABSENCE = "sensor_absence_"
+        private const val GROUP_SENSOR_NOISE = "sensor_noise_"
+        private const val GROUP_BATTERY = "battery_"
+        private const val GROUP_FILE_ARTIFACT = "file_artifact"
+        private const val GROUP_TELEPHONY = "telephony_"
+
         // ── Tier 1: Hard signals ──
         // Zero documented false positives. Any one = definitive emulator.
-        // These are checked by exact checkName match (not prefix).
         private val HARD_SIGNAL_CHECKS = setOf(
-            "build_hardware",           // "ranchu" / "goldfish" — QEMU virtual board, no real device uses this
-            "sensor_string_accelerometer", // "Goldfish" — emulator-exclusive sensor HAL
-            "sensor_string_gyroscope",     // "Goldfish" — emulator-exclusive sensor HAL
-            "gl_renderer",              // "Android Emulator OpenGL ES Translator" — emulator-exclusive
-            "sysprop_ro_kernel_qemu",   // ro.kernel.qemu=1 — canonical QEMU flag from kernel cmdline
+            CHECK_BUILD_HARDWARE,       // "ranchu" / "goldfish" — QEMU virtual board
+            CHECK_SENSOR_STRING_ACCEL,  // "Goldfish" — emulator-exclusive sensor HAL
+            CHECK_SENSOR_STRING_GYRO,   // "Goldfish" — emulator-exclusive sensor HAL
+            CHECK_GL_RENDERER,          // "Android Emulator OpenGL ES Translator"
+            CHECK_SYSPROP_QEMU,         // ro.kernel.qemu=1 — canonical QEMU kernel flag
         )
 
         // ── Tier 2: Soft signals ──
         // Contribute to weighted scoring when hard signals are absent (e.g., spoofed).
-        // Check group name prefix -> weight
         private val SOFT_CHECK_WEIGHTS = mapOf(
-            "build_" to 0.7f,           // Other build properties (fingerprint, device, model, product)
-            "sysprop_" to 0.6f,         // Other system properties (ro.hardware, init.svc.qemud)
-            "sensor_absence_" to 0.5f,  // Missing step counter / significant motion
-            "sensor_noise_" to 0.8f,    // Accelerometer / gyroscope noise too low
-            "battery_" to 0.85f,        // Temperature=0, voltage=0
-            "file_artifact" to 0.6f,    // QEMU files on filesystem
-            "telephony_" to 0.55f,      // Operator name = "Android"
+            GROUP_BUILD to 0.7f,
+            GROUP_SYSPROP to 0.6f,
+            GROUP_SENSOR_ABSENCE to 0.5f,
+            GROUP_SENSOR_NOISE to 0.8f,
+            GROUP_BATTERY to 0.85f,
+            GROUP_FILE_ARTIFACT to 0.6f,
+            GROUP_TELEPHONY to 0.55f,
         )
     }
 }
