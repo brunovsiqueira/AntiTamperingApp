@@ -347,6 +347,11 @@ class EmulatorDetector : TamperDetector {
         }
     }
 
+    /**
+     * Checks if sensor readings are unnaturally stable (stddev per axis below threshold).
+     * Real MEMS sensors always produce measurable noise; emulated sensors don't.
+     * See ADR-004 for threshold rationale and references.
+     */
     private fun analyzeSensorNoise(
         target: SensorSamplingTarget,
         samples: List<FloatArray>,
@@ -368,6 +373,8 @@ class EmulatorDetector : TamperDetector {
         val axisCount = samples.first().size.coerceAtMost(3)
         val stdDevs = computeStdDevPerAxis(samples, axisCount)
         val avgStdDev = stdDevs.take(axisCount).average().toFloat()
+
+        // Suspicious only if ALL axes are below threshold — one noisy axis = likely physical
         val allAxesStatic = stdDevs.take(axisCount).all { it < target.noiseThreshold }
         val suspicious = allAxesStatic
 
@@ -458,13 +465,7 @@ class EmulatorDetector : TamperDetector {
         }
     }
 
-    /**
-     * Computes standard deviation per axis for a list of sensor samples.
-     *
-     * @param samples Non-empty list of float arrays (each array = one reading).
-     * @param axisCount Number of axes to analyze (typically 3 for x/y/z).
-     * @return FloatArray of standard deviations, one per axis.
-     */
+    /** Population standard deviation per axis. See ADR-004 for threshold rationale. */
     private fun computeStdDevPerAxis(samples: List<FloatArray>, axisCount: Int): FloatArray {
         if (samples.isEmpty()) return FloatArray(axisCount) { 0f }
 
