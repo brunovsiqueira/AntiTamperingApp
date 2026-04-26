@@ -420,10 +420,13 @@ class EmulatorDetector : TamperDetector {
                 }
                 listeners.add(listener)
 
+                // Use SENSOR_DELAY_GAME (~50Hz) instead of SENSOR_DELAY_FASTEST.
+                // FASTEST (0μs) requires HIGH_SAMPLING_RATE_SENSORS permission on API 31+.
+                // GAME rate gives ~100 samples in 2s — more than sufficient for noise analysis.
                 val registered = sensorManager.registerListener(
                     listener,
                     target.sensor,
-                    SensorManager.SENSOR_DELAY_FASTEST,
+                    SensorManager.SENSOR_DELAY_GAME,
                 )
                 if (!registered) {
                     sampleMap.remove(target)
