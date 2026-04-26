@@ -8,9 +8,12 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.opengl.EGL14
+import android.opengl.EGLConfig
 import android.opengl.GLES20
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.telephony.TelephonyManager
 import com.bruno.antitamperingapp.detection.DetectionCategory
 import com.bruno.antitamperingapp.detection.DetectionResult
@@ -21,7 +24,6 @@ import com.bruno.antitamperingapp.detection.util.SafeExec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import kotlin.coroutines.resume
 import kotlin.math.sqrt
@@ -32,7 +34,7 @@ import kotlin.math.sqrt
  * Uses 9 check groups split into two phases:
  * - **Instant checks** (~50ms): Build properties, system properties, sensor strings,
  *   sensor absence, battery, GL renderer, file artifacts, telephony.
- * - **Extended checks** (~2-3s): Accelerometer noise analysis via sensor sampling.
+ * - **Extended checks** (~2-3s): Accelerometer and gyroscope noise analysis via sensor sampling.
  *
  * Call [detect] for full detection (instant + extended).
  * Call [detectInstant] for fast-path detection without sensor sampling.
@@ -196,7 +198,19 @@ class EmulatorDetector : TamperDetector {
         errors: MutableList<DetectionError>,
     ) {
         SafeExec.runCatching("sensor_strings", name, errors) {
-            val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+            val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+            if (sensorManager == null) {
+                errors.add(
+                    DetectionError.ApiUnavailable(
+                        detectorName = name,
+                        api = "SensorManager",
+                        requiredSdk = 1,
+                        currentSdk = Build.VERSION.SDK_INT,
+                    )
+                )
+                return@runCatching
+            }
+
             val sensorsToCheck = listOf(
                 Sensor.TYPE_ACCELEROMETER to "Accelerometer",
                 Sensor.TYPE_GYROSCOPE to "Gyroscope",
@@ -205,18 +219,20 @@ class EmulatorDetector : TamperDetector {
             for ((type, label) in sensorsToCheck) {
                 val sensor = sensorManager.getDefaultSensor(type)
                 if (sensor != null) {
-                    val nameGoldfish = sensor.name.contains("Goldfish", ignoreCase = true)
-                    val vendorAosp = sensor.vendor == "The Android Open Source Project"
+                    val sensorName = sensor.name ?: ""
+                    val sensorVendor = sensor.vendor ?: ""
+                    val nameGoldfish = sensorName.contains("Goldfish", ignoreCase = true)
+                    val vendorAosp = sensorVendor == "The Android Open Source Project"
                     val suspicious = nameGoldfish || vendorAosp
                     evidence.add(
                         Evidence(
                             checkName = "sensor_string_${label.lowercase()}",
                             description = if (suspicious) {
-                                "$label sensor '${sensor.name}' by '${sensor.vendor}' is emulated"
+                                "$label sensor '$sensorName' by '$sensorVendor' is emulated"
                             } else {
-                                "$label sensor '${sensor.name}' by '${sensor.vendor}' appears physical"
+                                "$label sensor '$sensorName' by '$sensorVendor' appears physical"
                             },
-                            rawValue = "${sensor.name} | ${sensor.vendor}",
+                            rawValue = "$sensorName | $sensorVendor",
                             suspicious = suspicious,
                         )
                     )
@@ -236,16 +252,16 @@ class EmulatorDetector : TamperDetector {
         errors: MutableList<DetectionError>,
     ) {
         SafeExec.runCatching("sensor_absence", name, errors) {
-            val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+            val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+                ?: return@runCatching
+
             val sensorsExpectedOnRealDevices = listOf(
                 Sensor.TYPE_STEP_COUNTER to "Step Counter",
                 Sensor.TYPE_SIGNIFICANT_MOTION to "Significant Motion",
             )
 
-            var missingCount = 0
             for ((type, label) in sensorsExpectedOnRealDevices) {
                 val present = sensorManager.getDefaultSensor(type) != null
-                if (!present) missingCount++
                 evidence.add(
                     Evidence(
                         checkName = "sensor_absence_${label.lowercase().replace(" ", "_")}",
@@ -265,6 +281,15 @@ class EmulatorDetector : TamperDetector {
     // ──────────────────────────────────────────────
     // Check 5: Sensor Noise Analysis (Extended)
     // Weight: 0.8
+    //
+    // Samples both accelerometer and gyroscope for
+    // ~2s, then checks standard deviation per axis.
+    // Real MEMS sensors always produce characteristic
+    // noise; emulated sensors are unnaturally stable.
+    //
+    // References:
+    // - PMC10490716: real accel stddev 0.004-0.011 m/s²
+    // - EmuDetLib: static-value detection heuristic
     // ──────────────────────────────────────────────
 
     private suspend fun runSensorNoiseAnalysis(
@@ -273,14 +298,33 @@ class EmulatorDetector : TamperDetector {
         errors: MutableList<DetectionError>,
     ) {
         SafeExec.withTimeout(SENSOR_SAMPLING_TIMEOUT_MS, "sensor_noise", name, errors) {
-            val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-            val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+            val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+            if (sensorManager == null) {
+                errors.add(
+                    DetectionError.ApiUnavailable(
+                        detectorName = name,
+                        api = "SensorManager",
+                        requiredSdk = 1,
+                        currentSdk = Build.VERSION.SDK_INT,
+                    )
+                )
+                return@withTimeout
+            }
 
-            if (accelerometer == null) {
+            val sensorsToSample = buildList {
+                sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
+                    add(SensorSamplingTarget(it, "accelerometer", ACCEL_NOISE_THRESHOLD))
+                }
+                sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let {
+                    add(SensorSamplingTarget(it, "gyroscope", GYRO_NOISE_THRESHOLD))
+                }
+            }
+
+            if (sensorsToSample.isEmpty()) {
                 evidence.add(
                     Evidence(
                         checkName = "sensor_noise",
-                        description = "No accelerometer available for noise analysis",
+                        description = "No accelerometer or gyroscope available for noise analysis",
                         rawValue = null,
                         suspicious = true,
                     )
@@ -288,114 +332,159 @@ class EmulatorDetector : TamperDetector {
                 return@withTimeout
             }
 
-            val samples = collectAccelerometerSamples(
+            val sampleResults = collectSensorSamples(
                 sensorManager,
-                accelerometer,
+                sensorsToSample,
                 SENSOR_SAMPLING_DURATION_MS,
             )
 
-            if (samples.size < MIN_SAMPLES_FOR_ANALYSIS) {
-                evidence.add(
-                    Evidence(
-                        checkName = "sensor_noise",
-                        description = "Insufficient samples for noise analysis (${samples.size})",
-                        rawValue = samples.size.toString(),
-                        suspicious = false,
-                    )
-                )
-                return@withTimeout
+            for ((target, samples) in sampleResults) {
+                analyzeSensorNoise(target, samples, evidence)
             }
-
-            val stdDevs = computeStdDevPerAxis(samples)
-            val minStdDev = stdDevs.min()
-            val avgStdDev = stdDevs.average().toFloat()
-            val suspicious = avgStdDev < NOISE_THRESHOLD_SUSPICIOUS
-
-            evidence.add(
-                Evidence(
-                    checkName = "sensor_noise",
-                    description = if (suspicious) {
-                        "Accelerometer noise too low (avg stddev=${"%.6f".format(avgStdDev)} m/s²). " +
-                            "Real devices: 0.004-0.011 m/s²"
-                    } else {
-                        "Accelerometer noise consistent with physical hardware " +
-                            "(avg stddev=${"%.6f".format(avgStdDev)} m/s²)"
-                    },
-                    rawValue = "stddev=[x=${"%.6f".format(stdDevs[0])}, " +
-                        "y=${"%.6f".format(stdDevs[1])}, z=${"%.6f".format(stdDevs[2])}] " +
-                        "samples=${samples.size}",
-                    suspicious = suspicious,
-                )
-            )
         }
     }
 
-    private suspend fun collectAccelerometerSamples(
-        sensorManager: SensorManager,
-        accelerometer: Sensor,
-        durationMs: Long,
-    ): List<FloatArray> = withContext(Dispatchers.Main) {
-        suspendCancellableCoroutine { continuation ->
-            val samples = mutableListOf<FloatArray>()
-
-            val listener = object : SensorEventListener {
-                override fun onSensorChanged(event: SensorEvent) {
-                    samples.add(event.values.copyOf())
-                }
-
-                override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-            }
-
-            sensorManager.registerListener(
-                listener,
-                accelerometer,
-                SensorManager.SENSOR_DELAY_FASTEST,
+    private fun analyzeSensorNoise(
+        target: SensorSamplingTarget,
+        samples: List<FloatArray>,
+        evidence: MutableList<Evidence>,
+    ) {
+        if (samples.size < MIN_SAMPLES_FOR_ANALYSIS) {
+            evidence.add(
+                Evidence(
+                    checkName = "sensor_noise_${target.label}",
+                    description = "Insufficient ${target.label} samples for noise analysis " +
+                        "(${samples.size}/${MIN_SAMPLES_FOR_ANALYSIS} required)",
+                    rawValue = samples.size.toString(),
+                    suspicious = false,
+                )
             )
+            return
+        }
 
-            continuation.invokeOnCancellation {
-                sensorManager.unregisterListener(listener)
+        val axisCount = samples.first().size.coerceAtMost(3)
+        val stdDevs = computeStdDevPerAxis(samples, axisCount)
+        val avgStdDev = stdDevs.take(axisCount).average().toFloat()
+        val allAxesStatic = stdDevs.take(axisCount).all { it < target.noiseThreshold }
+        val suspicious = allAxesStatic
+
+        evidence.add(
+            Evidence(
+                checkName = "sensor_noise_${target.label}",
+                description = if (suspicious) {
+                    "${target.label.replaceFirstChar { it.uppercase() }} noise too low " +
+                        "(avg stddev=${"%.6f".format(avgStdDev)}). " +
+                        "Threshold: ${target.noiseThreshold}"
+                } else {
+                    "${target.label.replaceFirstChar { it.uppercase() }} noise consistent with " +
+                        "physical hardware (avg stddev=${"%.6f".format(avgStdDev)})"
+                },
+                rawValue = buildString {
+                    append("stddev=[")
+                    for (i in 0 until axisCount) {
+                        if (i > 0) append(", ")
+                        append("${"%.6f".format(stdDevs[i])}")
+                    }
+                    append("] samples=${samples.size}")
+                },
+                suspicious = suspicious,
+            )
+        )
+    }
+
+    /**
+     * Collects sensor samples from multiple sensors concurrently over [durationMs].
+     * Returns a map from each [SensorSamplingTarget] to its collected samples.
+     *
+     * Runs on [Dispatchers.Main] because [SensorManager.registerListener] requires
+     * a Looper thread for callbacks.
+     */
+    private suspend fun collectSensorSamples(
+        sensorManager: SensorManager,
+        targets: List<SensorSamplingTarget>,
+        durationMs: Long,
+    ): Map<SensorSamplingTarget, List<FloatArray>> = withContext(Dispatchers.Main) {
+        suspendCancellableCoroutine { continuation ->
+            val sampleMap = targets.associateWithTo(mutableMapOf()) {
+                mutableListOf<FloatArray>()
+            }
+            val listeners = mutableListOf<SensorEventListener>()
+
+            for (target in targets) {
+                val listener = object : SensorEventListener {
+                    override fun onSensorChanged(event: SensorEvent) {
+                        sampleMap[target]?.add(event.values.copyOf())
+                    }
+
+                    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+                }
+                listeners.add(listener)
+
+                val registered = sensorManager.registerListener(
+                    listener,
+                    target.sensor,
+                    SensorManager.SENSOR_DELAY_FASTEST,
+                )
+                if (!registered) {
+                    sampleMap.remove(target)
+                }
             }
 
-            // Schedule unregistration after sampling period
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                sensorManager.unregisterListener(listener)
+            fun unregisterAll() {
+                for (listener in listeners) {
+                    try {
+                        sensorManager.unregisterListener(listener)
+                    } catch (_: Exception) {
+                        // Defensive: unregister should never throw, but don't let it crash
+                    }
+                }
+            }
+
+            continuation.invokeOnCancellation { unregisterAll() }
+
+            Handler(Looper.getMainLooper()).postDelayed({
+                unregisterAll()
                 if (continuation.isActive) {
-                    continuation.resume(samples.toList())
+                    val immutableResults = sampleMap.mapValues { it.value.toList() }
+                    continuation.resume(immutableResults)
                 }
             }, durationMs)
         }
     }
 
-    private fun computeStdDevPerAxis(samples: List<FloatArray>): FloatArray {
+    /**
+     * Computes standard deviation per axis for a list of sensor samples.
+     *
+     * @param samples Non-empty list of float arrays (each array = one reading).
+     * @param axisCount Number of axes to analyze (typically 3 for x/y/z).
+     * @return FloatArray of standard deviations, one per axis.
+     */
+    private fun computeStdDevPerAxis(samples: List<FloatArray>, axisCount: Int): FloatArray {
+        if (samples.isEmpty()) return FloatArray(axisCount) { 0f }
+
         val n = samples.size.toFloat()
-        val means = FloatArray(3)
+        val means = FloatArray(axisCount)
         for (sample in samples) {
-            means[0] += sample[0]
-            means[1] += sample[1]
-            means[2] += sample[2]
+            for (axis in 0 until axisCount) {
+                means[axis] += sample.getOrElse(axis) { 0f }
+            }
         }
-        means[0] /= n
-        means[1] /= n
-        means[2] /= n
+        for (axis in 0 until axisCount) {
+            means[axis] /= n
+        }
 
-        val variances = FloatArray(3)
+        val variances = FloatArray(axisCount)
         for (sample in samples) {
-            val dx = sample[0] - means[0]
-            val dy = sample[1] - means[1]
-            val dz = sample[2] - means[2]
-            variances[0] += dx * dx
-            variances[1] += dy * dy
-            variances[2] += dz * dz
+            for (axis in 0 until axisCount) {
+                val delta = sample.getOrElse(axis) { 0f } - means[axis]
+                variances[axis] += delta * delta
+            }
         }
-        variances[0] /= n
-        variances[1] /= n
-        variances[2] /= n
+        for (axis in 0 until axisCount) {
+            variances[axis] /= n
+        }
 
-        return floatArrayOf(
-            sqrt(variances[0]),
-            sqrt(variances[1]),
-            sqrt(variances[2]),
-        )
+        return FloatArray(axisCount) { sqrt(variances[it]) }
     }
 
     // ──────────────────────────────────────────────
@@ -409,11 +498,16 @@ class EmulatorDetector : TamperDetector {
         errors: MutableList<DetectionError>,
     ) {
         SafeExec.runCatching("battery", name, errors) {
-            val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            val intent: Intent? = try {
+                context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            } catch (_: Exception) {
+                null
+            }
+
             if (intent == null) {
                 evidence.add(
                     Evidence(
-                        checkName = "battery",
+                        checkName = "battery_profile",
                         description = "Could not read battery status",
                         rawValue = null,
                         suspicious = false,
@@ -433,7 +527,6 @@ class EmulatorDetector : TamperDetector {
             val tempSuspicious = temperature == 0
             // Voltage = 0 mV — no real battery reports this
             val voltageSuspicious = voltage == 0
-            val suspicious = tempSuspicious && voltageSuspicious
 
             evidence.add(
                 Evidence(
@@ -453,7 +546,7 @@ class EmulatorDetector : TamperDetector {
                     description = if (voltageSuspicious) {
                         "Battery voltage is 0 mV — no real battery reports this"
                     } else {
-                        "Battery voltage is ${voltage} mV — normal range"
+                        "Battery voltage is $voltage mV — normal range"
                     },
                     rawValue = voltage.toString(),
                     suspicious = voltageSuspicious,
@@ -462,9 +555,10 @@ class EmulatorDetector : TamperDetector {
             evidence.add(
                 Evidence(
                     checkName = "battery_profile",
-                    description = "Battery: level=$level%, status=$status, plugged=$plugged, present=$present",
+                    description = "Battery: level=$level%, status=$status, " +
+                        "plugged=$plugged, present=$present",
                     rawValue = "level=$level status=$status plugged=$plugged present=$present",
-                    suspicious = suspicious,
+                    suspicious = tempSuspicious && voltageSuspicious,
                 )
             )
         }
@@ -517,7 +611,8 @@ class EmulatorDetector : TamperDetector {
 
     /**
      * Creates a headless EGL PBuffer context to query the GL renderer string
-     * without needing a visible GLSurfaceView.
+     * without needing a visible GLSurfaceView. Properly cleans up all EGL
+     * resources in the finally block even if intermediate steps fail.
      */
     private fun queryGlRenderer(): String? {
         var display = EGL14.EGL_NO_DISPLAY
@@ -536,9 +631,12 @@ class EmulatorDetector : TamperDetector {
                 EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT,
                 EGL14.EGL_NONE,
             )
-            val configs = arrayOfNulls<android.opengl.EGLConfig>(1)
+            val configs = arrayOfNulls<EGLConfig>(1)
             val numConfigs = IntArray(1)
-            if (!EGL14.eglChooseConfig(display, configAttribs, 0, configs, 0, 1, numConfigs, 0)) {
+            if (!EGL14.eglChooseConfig(
+                    display, configAttribs, 0, configs, 0, 1, numConfigs, 0,
+                )
+            ) {
                 return null
             }
             val config = configs[0] ?: return null
@@ -564,6 +662,16 @@ class EmulatorDetector : TamperDetector {
 
             return GLES20.glGetString(GLES20.GL_RENDERER)
         } finally {
+            cleanupEgl(display, surface, context)
+        }
+    }
+
+    private fun cleanupEgl(
+        display: android.opengl.EGLDisplay,
+        surface: android.opengl.EGLSurface,
+        context: android.opengl.EGLContext,
+    ) {
+        try {
             if (display != EGL14.EGL_NO_DISPLAY) {
                 EGL14.eglMakeCurrent(
                     display,
@@ -579,6 +687,8 @@ class EmulatorDetector : TamperDetector {
                 }
                 EGL14.eglTerminate(display)
             }
+        } catch (_: Exception) {
+            // Defensive: EGL cleanup should not crash the detector
         }
     }
 
@@ -629,9 +739,29 @@ class EmulatorDetector : TamperDetector {
         errors: MutableList<DetectionError>,
     ) {
         SafeExec.runCatching("telephony", name, errors) {
-            val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-            val networkOp = tm.networkOperatorName ?: ""
-            val simOp = tm.simOperatorName ?: ""
+            val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+            if (tm == null) {
+                errors.add(
+                    DetectionError.ApiUnavailable(
+                        detectorName = name,
+                        api = "TelephonyManager",
+                        requiredSdk = 1,
+                        currentSdk = Build.VERSION.SDK_INT,
+                    )
+                )
+                return@runCatching
+            }
+
+            val networkOp = try {
+                tm.networkOperatorName ?: ""
+            } catch (_: Exception) {
+                ""
+            }
+            val simOp = try {
+                tm.simOperatorName ?: ""
+            } catch (_: Exception) {
+                ""
+            }
 
             val networkSuspicious = networkOp.equals("Android", ignoreCase = true)
             val simSuspicious = simOp.equals("Android", ignoreCase = true)
@@ -675,7 +805,6 @@ class EmulatorDetector : TamperDetector {
         evidence: List<Evidence>,
         errors: List<DetectionError>,
     ): DetectionResult {
-        val suspiciousEvidence = evidence.filter { it.suspicious }
         val confidence = computeConfidence(evidence)
         return DetectionResult(
             detected = confidence >= DETECTION_THRESHOLD,
@@ -688,10 +817,14 @@ class EmulatorDetector : TamperDetector {
     /**
      * Computes confidence using a weighted scheme where each check group
      * contributes its weight to the overall score when triggered.
+     *
+     * Partial credit: if 3/8 build props are suspicious, that group
+     * contributes 3/8 of its weight.
      */
     private fun computeConfidence(evidence: List<Evidence>): Float {
         var triggeredWeight = 0f
         val totalWeight = CHECK_WEIGHTS.values.sum()
+        if (totalWeight == 0f) return 0f
 
         for ((group, weight) in CHECK_WEIGHTS) {
             val groupEvidence = evidence.filter { it.checkName.startsWith(group) }
@@ -701,7 +834,6 @@ class EmulatorDetector : TamperDetector {
             val totalCount = groupEvidence.size
 
             if (suspiciousCount > 0) {
-                // Partial credit: if 3/8 build props are suspicious, contribute 3/8 of the weight
                 val ratio = suspiciousCount.toFloat() / totalCount.toFloat()
                 triggeredWeight += weight * ratio
             }
@@ -732,15 +864,25 @@ class EmulatorDetector : TamperDetector {
         val isSuspicious: (String) -> Boolean,
     )
 
+    private data class SensorSamplingTarget(
+        val sensor: Sensor,
+        val label: String,
+        val noiseThreshold: Float,
+    )
+
     companion object {
-        // Thresholds
         private const val DETECTION_THRESHOLD = 0.35f
-        private const val NOISE_THRESHOLD_SUSPICIOUS = 0.002f
+
+        // Accelerometer noise threshold: real devices show 0.004-0.011 m/s² (PMC10490716)
+        private const val ACCEL_NOISE_THRESHOLD = 0.002f
+        // Gyroscope noise threshold: real devices show measurable drift noise;
+        // emulators return near-zero or perfectly stable values
+        private const val GYRO_NOISE_THRESHOLD = 0.001f
+
         private const val SENSOR_SAMPLING_DURATION_MS = 2000L
         private const val SENSOR_SAMPLING_TIMEOUT_MS = 4000L
         private const val MIN_SAMPLES_FOR_ANALYSIS = 20
 
-        // Known emulator GL renderer substrings
         private val EMULATOR_GL_RENDERERS = listOf(
             "Android Emulator",
             "SwiftShader",
@@ -754,7 +896,7 @@ class EmulatorDetector : TamperDetector {
             "sysprop_" to 0.6f,
             "sensor_string_" to 0.9f,
             "sensor_absence_" to 0.5f,
-            "sensor_noise" to 0.8f,
+            "sensor_noise_" to 0.8f,
             "battery_" to 0.85f,
             "gl_renderer" to 0.9f,
             "file_artifact" to 0.6f,
