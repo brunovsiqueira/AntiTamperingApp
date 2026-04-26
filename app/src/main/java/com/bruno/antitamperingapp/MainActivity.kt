@@ -211,7 +211,7 @@ private fun VerdictHeader(verdict: TamperVerdict) {
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "Confidence: ${(animatedScore * 100).toInt()}%",
+                text = "Tampering likelihood: ${(animatedScore * 100).toInt()}%",
                 style = MaterialTheme.typography.bodyLarge,
             )
             Spacer(Modifier.height(8.dp))
@@ -259,7 +259,7 @@ private fun CategoryCard(category: DetectionCategory, result: DetectionResult) {
             }
 
             Text(
-                text = "Confidence: ${(result.confidence * 100).toInt()}% | " +
+                text = "Tampering likelihood: ${(result.confidence * 100).toInt()}% | " +
                     "Evidence: ${suspicious.size} suspicious, ${clean.size} clean",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
