@@ -120,13 +120,10 @@ class EmulatorDetector : TamperDetector {
                 BuildCheck("build_manufacturer", "Build.MANUFACTURER", Build.MANUFACTURER) {
                     it.equals("Genymotion", ignoreCase = true)
                 },
-                BuildCheck("build_type", "Build.TYPE", Build.TYPE) {
-                    it.equals("userdebug", ignoreCase = true)
-                },
-                BuildCheck("build_tags", "Build.TAGS", Build.TAGS) {
-                    it.equals("dev-keys", ignoreCase = true) ||
-                        it.equals("test-keys", ignoreCase = true)
-                },
+                // NOTE: Build.TYPE and Build.TAGS were intentionally excluded.
+                // Google Play emulator images use "user/release-keys" (same as real devices),
+                // making these checks cause false negatives on Play images and false positives
+                // on custom ROM devices that use "userdebug". See ADR-004.
             )
 
             for (check in checks) {

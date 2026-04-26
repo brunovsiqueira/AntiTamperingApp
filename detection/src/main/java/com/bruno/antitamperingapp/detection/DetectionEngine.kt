@@ -137,9 +137,9 @@ class DetectionEngine private constructor(
 
     companion object {
         /** Score at or above this = TAMPERED. */
-        private const val TAMPERED_THRESHOLD = 0.6f
+        private const val TAMPERED_THRESHOLD = 0.45f
 
         /** Score at or above this (but below TAMPERED) = WARNING. */
-        private const val WARNING_THRESHOLD = 0.25f
+        private const val WARNING_THRESHOLD = 0.2f
     }
 }
