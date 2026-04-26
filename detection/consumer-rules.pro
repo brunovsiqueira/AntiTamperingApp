@@ -1,0 +1,9 @@
+# Detection module consumer ProGuard rules
+# Keep the public API surface
+-keep class com.bruno.antitamperingapp.detection.DetectionEngine { *; }
+-keep class com.bruno.antitamperingapp.detection.DetectionResult { *; }
+-keep class com.bruno.antitamperingapp.detection.Evidence { *; }
+-keep class com.bruno.antitamperingapp.detection.TamperVerdict { *; }
+-keep class com.bruno.antitamperingapp.detection.DetectionCategory { *; }
+-keep class com.bruno.antitamperingapp.detection.error.DetectionError { *; }
+-keep class com.bruno.antitamperingapp.detection.error.DetectionError$* { *; }

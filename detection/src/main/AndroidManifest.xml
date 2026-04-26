@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Declare cloner packages we want to query (Android 11+ package visibility) -->
+    <queries>
+        <package android:name="com.lbe.parallel.intl" />
+        <package android:name="com.lbe.parallel" />
+        <package android:name="com.lbe.parallel.intl.arm64" />
+        <package android:name="com.parallel.space" />
+        <package android:name="com.parallel.space.lite" />
+        <package android:name="com.ludashi.dualspace" />
+        <package android:name="com.ludashi.dualspace.pro" />
+        <package android:name="com.excelliance.dualaid" />
+        <package android:name="com.excelliance.multiaccounts" />
+        <package android:name="com.polestar.multiaccount" />
+        <package android:name="com.polestar.super.clone" />
+        <package android:name="com.trigtech.privateme" />
+        <package android:name="com.nox.mopen.app" />
+        <package android:name="com.cloneapp.dualspace" />
+        <package android:name="com.applisto.appcloner" />
+        <package android:name="com.applisto.appcloner.patch" />
+        <package android:name="com.dualspace.turbo" />
+        <package android:name="com.virtualapp" />
+        <package android:name="io.virtualapp" />
+        <package android:name="io.twoface" />
+        <package android:name="com.jumobile.multiapp" />
+        <package android:name="com.dual.clone" />
+        <package android:name="com.multi.parallel" />
+        <package android:name="com.qihoo.magic" />
+        <package android:name="com.game.cloner" />
+        <package android:name="com.oasisfeng.island" />
+        <package android:name="com.x8bit.biern" />
+    </queries>
+
+</manifest>
