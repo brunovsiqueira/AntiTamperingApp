@@ -815,18 +815,31 @@ class EmulatorDetector : TamperDetector {
     }
 
     /**
-     * Computes confidence using a weighted scheme where each check group
-     * contributes its weight to the overall score when triggered.
+     * Two-tier confidence computation:
      *
-     * Partial credit: if 3/8 build props are suspicious, that group
-     * contributes 3/8 of its weight.
+     * **Tier 1 — Hard signals (deterministic):** Signals with zero documented false
+     * positives. If ANY hard signal fires, confidence is 1.0 immediately. These are
+     * emulator-exclusive artifacts that no real device produces.
+     *
+     * **Tier 2 — Soft signals (heuristic):** Weighted scoring across all check groups.
+     * Used as fallback when hard signals are spoofed (e.g., via Frida).
+     *
+     * This mirrors industry practice in fraud detection (hard rules + soft scoring)
+     * and RASP systems (deterministic + heuristic layers).
      */
     private fun computeConfidence(evidence: List<Evidence>): Float {
+        // Tier 1: Hard signals — any one of these = definitive emulator
+        val hardSignalFired = evidence.any { ev ->
+            ev.suspicious && ev.checkName in HARD_SIGNAL_CHECKS
+        }
+        if (hardSignalFired) return 1.0f
+
+        // Tier 2: Soft signal weighted scoring
         var triggeredWeight = 0f
-        val totalWeight = CHECK_WEIGHTS.values.sum()
+        val totalWeight = SOFT_CHECK_WEIGHTS.values.sum()
         if (totalWeight == 0f) return 0f
 
-        for ((group, weight) in CHECK_WEIGHTS) {
+        for ((group, weight) in SOFT_CHECK_WEIGHTS) {
             val groupEvidence = evidence.filter { it.checkName.startsWith(group) }
             if (groupEvidence.isEmpty()) continue
 
@@ -834,6 +847,7 @@ class EmulatorDetector : TamperDetector {
             val totalCount = groupEvidence.size
 
             if (suspiciousCount > 0) {
+                // Partial credit: if 3/6 build props are suspicious, contribute 3/6 of the weight
                 val ratio = suspiciousCount.toFloat() / totalCount.toFloat()
                 triggeredWeight += weight * ratio
             }
@@ -890,17 +904,28 @@ class EmulatorDetector : TamperDetector {
             "Translator",
         )
 
+        // ── Tier 1: Hard signals ──
+        // Zero documented false positives. Any one = definitive emulator.
+        // These are checked by exact checkName match (not prefix).
+        private val HARD_SIGNAL_CHECKS = setOf(
+            "build_hardware",           // "ranchu" / "goldfish" — QEMU virtual board, no real device uses this
+            "sensor_string_accelerometer", // "Goldfish" — emulator-exclusive sensor HAL
+            "sensor_string_gyroscope",     // "Goldfish" — emulator-exclusive sensor HAL
+            "gl_renderer",              // "Android Emulator OpenGL ES Translator" — emulator-exclusive
+            "sysprop_ro_kernel_qemu",   // ro.kernel.qemu=1 — canonical QEMU flag from kernel cmdline
+        )
+
+        // ── Tier 2: Soft signals ──
+        // Contribute to weighted scoring when hard signals are absent (e.g., spoofed).
         // Check group name prefix -> weight
-        private val CHECK_WEIGHTS = mapOf(
-            "build_" to 0.7f,
-            "sysprop_" to 0.6f,
-            "sensor_string_" to 0.9f,
-            "sensor_absence_" to 0.5f,
-            "sensor_noise_" to 0.8f,
-            "battery_" to 0.85f,
-            "gl_renderer" to 0.9f,
-            "file_artifact" to 0.6f,
-            "telephony_" to 0.55f,
+        private val SOFT_CHECK_WEIGHTS = mapOf(
+            "build_" to 0.7f,           // Other build properties (fingerprint, device, model, product)
+            "sysprop_" to 0.6f,         // Other system properties (ro.hardware, init.svc.qemud)
+            "sensor_absence_" to 0.5f,  // Missing step counter / significant motion
+            "sensor_noise_" to 0.8f,    // Accelerometer / gyroscope noise too low
+            "battery_" to 0.85f,        // Temperature=0, voltage=0
+            "file_artifact" to 0.6f,    // QEMU files on filesystem
+            "telephony_" to 0.55f,      // Operator name = "Android"
         )
     }
 }
