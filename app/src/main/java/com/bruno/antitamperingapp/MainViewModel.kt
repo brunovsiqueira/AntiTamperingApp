@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bruno.antitamperingapp.detection.DetectionEngine
 import com.bruno.antitamperingapp.detection.TamperVerdict
+import com.bruno.antitamperingapp.detection.detectors.CloningDetector
 import com.bruno.antitamperingapp.detection.detectors.EmulatorDetector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,7 +16,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val engine = DetectionEngine.Builder()
         .addDetector(EmulatorDetector())
-        // Future: .addDetector(CloningDetector())
+        .addDetector(CloningDetector())
         // Future: .addDetector(IntegrityDetector())
         // Future: .addDetector(HookingDetector())
         .build()
