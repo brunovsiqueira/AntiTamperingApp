@@ -161,7 +161,7 @@ class CloningDetector : TamperDetector {
                         if (path.startsWith("/data/data/") || path.startsWith("/data/app/") ||
                             path.startsWith("/data/user/")
                         ) {
-                            if (!path.contains(packageName)) {
+                            if (!path.contains(packageName) && !isWhitelistedPath(path)) {
                                 foreignPaths.add(path)
                             }
                         }
@@ -416,6 +416,15 @@ class CloningDetector : TamperDetector {
     }
 
     /**
+     * Checks if a foreign path in /proc/self/maps is from a known legitimate source.
+     * Some system services (notably Google Play Services) memory-map files from their
+     * own data directory into other apps' processes. These are not virtual containers.
+     */
+    private fun isWhitelistedPath(path: String): Boolean {
+        return PROC_MAPS_WHITELISTED_PACKAGES.any { path.contains(it) }
+    }
+
+    /**
      * Two-tier confidence (same approach as EmulatorDetector):
      * - Tier 1: Hard signals → confidence = 1.0
      * - Tier 2: Soft signal weighted scoring
@@ -471,6 +480,15 @@ class CloningDetector : TamperDetector {
             CHECK_ENV_VARS to 0.7f,
             CHECK_STACK_TRACE to 0.6f,
             CHECK_CLONER_PACKAGES to 0.4f,
+        )
+
+        // Packages whose paths legitimately appear in other apps' /proc/self/maps.
+        // Google Play Services maps emoji fonts into app processes for shared rendering.
+        // These are NOT virtual container artifacts.
+        private val PROC_MAPS_WHITELISTED_PACKAGES = listOf(
+            "com.google.android.gms",   // Google Play Services (fonts, shared libs)
+            "com.google.android.trichromelibrary", // Chrome/WebView shared library
+            "com.google.android.webview", // WebView shared library
         )
 
         // Path segments indicating a virtual container filesystem layout
