@@ -67,7 +67,7 @@ Google Play Services memory-maps emoji fonts into other apps' processes for shar
 
 **Symptom:** App crashed with SIGSEGV at address `0x19` (25 decimal) when reading ArtMethod hotness_count on Samsung physical device. Also crashed on emulator before signal handler was added.
 
-**Root cause:** `jmethodID` returned by `FromReflectedMethod()` is NOT a direct pointer to ArtMethod on Samsung's ART implementation. The value `0x19` = 25 is too small to be a memory address — it appears to be an index or handle, not a pointer. Adding 14 (our offset) gives `0x19 + 0xE = 0x27` = address 39, which is unmapped memory → SIGSEGV.
+**Root cause:** `jmethodID` returned by `FromReflectedMethod()` is NOT a direct pointer to ArtMethod. The actual value is `0xb` (decimal 11) — a method index, not a memory address. Our code tried to read at `0xb + 14 = 0x19` (decimal 25), which is unmapped memory → SIGSEGV at fault address `0x19`.
 
 **Fix v1:** Added SIGSEGV signal handler with `sigsetjmp`/`siglongjmp` to catch the crash and return RESULT_ERROR gracefully.
 
