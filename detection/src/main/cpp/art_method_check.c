@@ -118,8 +118,27 @@ Java_com_bruno_antitamperingapp_detection_detectors_ArtMethodChecker_checkHotnes
         return RESULT_ERROR;
     }
 
-    // jmethodID is typically ArtMethod* in ART, but may be indirect on some builds.
-    // Source: AOSP jni_internal.cc, art_method.h
+    // Debug: log the raw pointer value to understand the layout
+    __android_log_print(ANDROID_LOG_INFO, TAG,
+        "jmethodID raw pointer: %p (decimal: %lu)",
+        method_id, (unsigned long)method_id);
+
+    // On AOSP ART, jmethodID == ArtMethod* (direct pointer to heap/image).
+    // On some OEM builds (Samsung, Huawei), jmethodID may be an index or
+    // indirect reference. A valid ArtMethod* should be a large address
+    // (in the process address space), not a small number.
+    // Source: AOSP art/runtime/jni/jni_internal.cc
+    uintptr_t ptr_value = (uintptr_t)method_id;
+    if (ptr_value < 0x10000) {
+        // Pointer is suspiciously small — likely an index, not a real pointer.
+        // Samsung's ART implementation may use method indices instead of pointers.
+        __android_log_print(ANDROID_LOG_WARN, TAG,
+            "jmethodID value %p is too small to be a valid pointer — "
+            "likely an index/handle (OEM ART variant). Skipping.",
+            method_id);
+        return RESULT_ERROR;
+    }
+
     const void *hotness_addr = (const char *)method_id + HOTNESS_COUNT_OFFSET;
 
     int32_t hotness_count = safe_read_uint16(hotness_addr);

@@ -416,12 +416,23 @@ class CloningDetector : TamperDetector {
     }
 
     /**
-     * Checks if a foreign path in /proc/self/maps is from a known legitimate source.
-     * Some system services (notably Google Play Services) memory-map files from their
-     * own data directory into other apps' processes. These are not virtual containers.
+     * Determines if a foreign path in /proc/self/maps is likely benign.
+     *
+     * System services (GMS, WebView, etc.) legitimately map non-executable files
+     * (fonts, configs) into app processes. Virtual containers map executable content
+     * (.apk, .dex, .so) from their directories. We only flag executable artifacts.
+     *
+     * This is more robust than a package whitelist, which would break on Chinese
+     * devices (Huawei, Xiaomi) or alternative app stores with their own system services.
      */
     private fun isWhitelistedPath(path: String): Boolean {
-        return PROC_MAPS_WHITELISTED_PACKAGES.any { path.contains(it) }
+        // Only flag paths containing executable artifacts — these indicate code
+        // was loaded from another app's directory (virtual container behavior).
+        // Non-executable files (fonts, configs) mapped by system services are benign.
+        val isExecutableArtifact = EXECUTABLE_EXTENSIONS.any { ext ->
+            path.endsWith(ext, ignoreCase = true)
+        }
+        return !isExecutableArtifact
     }
 
     /**
@@ -482,13 +493,12 @@ class CloningDetector : TamperDetector {
             CHECK_CLONER_PACKAGES to 0.4f,
         )
 
-        // Packages whose paths legitimately appear in other apps' /proc/self/maps.
-        // Google Play Services maps emoji fonts into app processes for shared rendering.
-        // These are NOT virtual container artifacts.
-        private val PROC_MAPS_WHITELISTED_PACKAGES = listOf(
-            "com.google.android.gms",   // Google Play Services (fonts, shared libs)
-            "com.google.android.trichromelibrary", // Chrome/WebView shared library
-            "com.google.android.webview", // WebView shared library
+        // File extensions that indicate executable/code artifacts in /proc/self/maps.
+        // If a foreign path contains these, it means code was loaded from another app's
+        // directory — strong indicator of virtual container. Non-executable files (fonts,
+        // configs, data) mapped by system services (GMS, WebView) are benign.
+        private val EXECUTABLE_EXTENSIONS = listOf(
+            ".apk", ".dex", ".so", ".odex", ".vdex", ".oat", ".art",
         )
 
         // Path segments indicating a virtual container filesystem layout
