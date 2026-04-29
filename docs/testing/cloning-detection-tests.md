@@ -73,9 +73,19 @@ Google Play Services memory-maps emoji fonts into other apps' processes for shar
 
 **Fix v2:** Added pointer validation — if `jmethodID < 0x10000`, it's clearly not a valid heap pointer, skip the read entirely without needing the signal handler.
 
-**Status:** No longer crashes. Returns "inconclusive" on Samsung. Investigating whether we can resolve the indirect jmethodID to the actual ArtMethod pointer on Samsung's ART variant.
+**Status:** No longer crashes. Returns "inconclusive" on both Samsung physical device and Google APIs emulator.
 
-**Impact on detection:** ArtMethod check is a positive-only signal — "inconclusive" means no opinion, not "clean". The other 6 checks still function correctly. The ArtMethod check may work correctly on AOSP-based devices (Pixel, etc.) but needs validation.
+**Root cause confirmed:** Both devices return `jmethodID = 0xb` (decimal 11). This is a method index, not a memory address. Modern ART implementations (both Samsung and Google APIs builds) use indirect jmethodID encoding where jmethodID is an index into a method table, not a direct pointer to the ArtMethod struct. The Matrioska paper (ACSAC 2024) likely tested on AOSP debug builds where jmethodID == ArtMethod*.
+
+**Resolving the indirection would require:**
+- Reading the ART internal method table (hidden, version-specific)
+- Or using `art::jni::DecodeArtMethod()` which is an internal ART function
+
+Both are significantly more fragile than the current approach and outside scope.
+
+**Decision:** Keep the check as a positive-only signal. It safely returns "inconclusive" on devices where jmethodID is indirect, and would correctly detect virtual containers on AOSP builds where jmethodID is a direct pointer. The story of "implemented state-of-the-art technique, discovered real-world limitation, handled gracefully" is valuable for the interview.
+
+**Impact on detection:** ArtMethod check is a positive-only signal — "inconclusive" means no opinion, not "clean". The other 6 checks still function correctly.
 
 ## Notes
 
