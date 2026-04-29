@@ -7,11 +7,14 @@
 | Samsung Galaxy (physical) | RQCW106J2PW | Android 14+ | Parallel Space Lite |
 | Google Play AVD | emulator-5554 | API 36 | (no cloner installed) |
 
-## Test 1: Physical Device (Normal Install) — Expected CLEAN
+## Test 1: Physical Device (Normal Install, Parallel Space Installed but Not Used) — Expected CLEAN
 
-**Result:** After fix — SECURE, Tampering likelihood: 0%
+**Result:** SECURE — Tampering likelihood: 11%
 
-All 7 checks clean, 0 errors.
+6/7 checks clean. One soft signal fired:
+- `clone_packages`: Found `com.lbe.parallel.intl` installed (Parallel Space is on the device but we're NOT running inside it)
+
+This is correct behavior — detecting that a cloner is *installed* is a weak signal (soft, weight 0.4). The app is running normally, not cloned. Score 11% is below WARNING threshold (20%).
 
 ## Test 2: Physical Device (Inside Parallel Space) — Expected TAMPERED
 
@@ -21,12 +24,22 @@ All 7 checks clean, 0 errors.
 3. Launch app from inside Parallel Space
 4. Run scan
 
-**How to capture logs:**
-```bash
-adb -s RQCW106J2PW logcat -s TamperDetection,ArtMethodCheck
-```
+**Result:** TAMPERED — Tampering likelihood: 100% (3 hard signals fired)
 
-**Result:** _pending — testing in progress_
+**Hard signals that fired:**
+- `clone_data_dir`: `/data/data/com.lbe.parallel.intl/parallel_intl/0/com.bruno.antitamperingapp/files` — data stored inside Parallel Space's sandbox
+- `clone_proc_maps`: 9 foreign paths including `libdaclient_64.so`, `libcompatible_64.so`, `base.apk`, `base.art` from `com.lbe.parallel.intl`
+- `clone_art_method`: `hotness_count == 0` — ArtMethod check fired! jmethodID = `0x70328210` (valid pointer inside container, vs `0x15` index outside)
+
+**Soft signals that also fired:**
+- `clone_packages`: Found `com.lbe.parallel.intl` installed
+
+**Key finding — ArtMethod works inside virtual containers:**
+- Outside Parallel Space: jmethodID = `0x15` (index, Samsung encoding) → inconclusive
+- Inside Parallel Space: jmethodID = `0x70328210` (direct pointer, VirtualApp AOSP encoding) → `hotness_count == 0` → DETECTED
+- Parallel Space's VirtualApp engine uses AOSP's direct-pointer jmethodID, not Samsung's index encoding. The check fires exactly where it matters.
+
+**Scan duration:** 21ms for CloningDetector (instant — all hard signals, no sensor sampling needed)
 
 **Expected hard signals:**
 - `clone_data_dir`: path should contain `com.lbe.parallel` instead of our package
