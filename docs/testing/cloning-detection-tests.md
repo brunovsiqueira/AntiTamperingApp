@@ -100,6 +100,38 @@ Both are significantly more fragile than the current approach and outside scope.
 
 **Impact on detection:** ArtMethod check is a positive-only signal — "inconclusive" means no opinion, not "clean". The other 6 checks still function correctly.
 
+## Test 4: Frida Cloning Bypass Inside Parallel Space (Emulator)
+
+**Setup:**
+- emulator-5556 (API 35, google_apis, rootable)
+- Parallel Space installed, AntiTamperingApp cloned inside it
+- Frida attached to cloned app PID with `frida-bypass-cloning-signals.js`
+
+**Frida hooks active:**
+1. `File.<init>` — blocked `/proc/self/maps` reading
+2. `getFilesDir()` — returned fake path without container package
+3. `getDataDir()` — returned fake path
+4. `getApplicationInfo().sourceDir` — returned `/data/app/` path
+5. `getStackTrace()` — stripped cloner class names
+6. `getPackageInfo()` — hid `com.lbe.parallel.intl`
+7. `System.getenv()` — hid VirtualApp env vars
+
+**Baseline (without Frida):** TAMPERED 100% — 4 signals fired (data_dir, proc_maps, packages, art_method)
+
+**With Frida bypass:** TAMPERED 100% — **only `clone_art_method` survived**
+
+| Signal | Without Frida | With Frida |
+|--------|--------------|------------|
+| clone_data_dir | DETECTED | Bypassed |
+| clone_apk_source | clean | clean |
+| clone_proc_maps | DETECTED (13 foreign paths) | Bypassed |
+| clone_env_vars | clean | clean |
+| clone_stack_trace | clean | clean |
+| clone_packages | DETECTED | Bypassed |
+| clone_art_method | DETECTED (hotness_count=0) | **DETECTED (hotness_count=0)** |
+
+**Key result:** ArtMethod at `0x718e72b0` with `hotness_count=0` is the only signal Frida could not bypass. It reads native ART memory directly, below all Java API hooks. This validates the defense-in-depth architecture from the Mascara paper (Section IX-B).
+
 ## Notes
 
 - ArtMethod check only runs on API 31–36. On unsupported versions or OEM ART variants, returns "inconclusive".
