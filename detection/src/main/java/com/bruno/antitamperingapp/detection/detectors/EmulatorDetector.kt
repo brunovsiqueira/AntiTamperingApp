@@ -36,10 +36,15 @@ import kotlin.math.sqrt
  *   sensor absence, battery, GL renderer, file artifacts, telephony.
  * - **Extended checks** (~2-3s): Accelerometer and gyroscope noise analysis via sensor sampling.
  *
- * Call [detect] for full detection (instant + extended).
- * Call [detectInstant] for fast-path detection without sensor sampling.
+ * @param includeSensorAnalysis When true (default), samples accelerometer and gyroscope
+ *   for ~2 seconds to analyze noise patterns. Real hardware produces characteristic MEMS
+ *   noise; emulators don't. Catches emulators even when Build properties are spoofed.
+ *   Set to false for faster results (~50ms vs ~2s) when latency is critical.
+ *   See ADR-004 for details.
  */
-class EmulatorDetector : TamperDetector {
+class EmulatorDetector(
+    private val includeSensorAnalysis: Boolean = true,
+) : TamperDetector {
 
     override val name: String = "EmulatorDetector"
     override val category: DetectionCategory = DetectionCategory.EMULATOR
@@ -50,20 +55,9 @@ class EmulatorDetector : TamperDetector {
         val evidence = mutableListOf<Evidence>()
 
         runInstantChecks(context, evidence, errors)
-        runSensorNoiseAnalysis(context, evidence, errors)
-
-        return buildResult(evidence, errors)
-    }
-
-    /**
-     * Fast-path detection using only instant checks (no sensor sampling delay).
-     * Useful when latency is critical.
-     */
-    suspend fun detectInstant(context: Context): DetectionResult {
-        val errors = mutableListOf<DetectionError>()
-        val evidence = mutableListOf<Evidence>()
-
-        runInstantChecks(context, evidence, errors)
+        if (includeSensorAnalysis) {
+            runSensorNoiseAnalysis(context, evidence, errors)
+        }
 
         return buildResult(evidence, errors)
     }

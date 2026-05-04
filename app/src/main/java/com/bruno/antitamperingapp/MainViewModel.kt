@@ -17,15 +17,13 @@ import kotlinx.coroutines.launch
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val engine = DetectionEngine.Builder()
-        .addDetector(EmulatorDetector())
+        .addDetector(EmulatorDetector(
+            includeSensorAnalysis = true, // adds ~2s for noise pattern analysis
+        ))
         .addDetector(CloningDetector())
         .addDetector(IntegrityDetector(
-            // SHA-256 of our debug signing certificate.
-            // Extracted via: apksigner verify --print-certs app-debug.apk
-            // For production: use Play App Signing key from Play Console.
-            // SHA-256 of our debug signing certificate.
-            // Extracted via: apksigner verify --print-certs app-debug.apk
-            // For production: use Play App Signing key from Play Console.
+            // SHA-256 of debug signing cert (apksigner verify --print-certs app-debug.apk)
+            // Production: use Play App Signing key from Play Console
             expectedSigningCertSha256 = "f9c0679ec146e15dcaab36279624b851b4b74dac0a393a95735912b6cc719291",
         ))
         .addDetector(HookingDetector())
