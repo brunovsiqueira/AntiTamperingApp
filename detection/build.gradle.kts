@@ -26,11 +26,11 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            // Library modules should NOT minify — the consuming app module
+            // runs R8 over everything. Library minification would strip classes
+            // before the app can reference them.
+            isMinifyEnabled = false
+            consumerProguardFiles("consumer-rules.pro")
         }
     }
 

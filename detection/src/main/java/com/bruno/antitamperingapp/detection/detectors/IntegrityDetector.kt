@@ -342,14 +342,25 @@ class IntegrityDetector(
         )
 
         // Source: Android docs, common installer package names
+        // Known legitimate app stores. A sideloaded app (installer=null) is
+        // suspicious but not proof of tampering — enterprise/MDM is a valid case.
         private val TRUSTED_INSTALLERS = setOf(
             "com.android.vending",          // Google Play Store
             "com.amazon.venezia",           // Amazon Appstore
             "com.huawei.appmarket",         // Huawei AppGallery
             "com.samsung.android.vending",  // Samsung Galaxy Store
+            "com.sec.android.app.samsungapps", // Samsung Galaxy Store (older)
             "com.xiaomi.market",            // Xiaomi GetApps
+            "com.xiaomi.mipicks",           // Xiaomi Mi Picks (newer)
             "com.oppo.market",              // OPPO App Market
+            "com.heytap.market",            // OPPO/OnePlus HeyTap Market
             "com.bbk.appstore",             // Vivo App Store
+            "com.lenovo.leos.appstore",     // Lenovo App Store
+            "com.meizu.mstore",             // Meizu App Store
+            "com.tencent.android.qqdownloader", // Tencent MyApp (China)
+            "com.baidu.appsearch",          // Baidu Mobile Assistant (China)
+            "com.wandoujia.phoenix2",       // Wandoujia (China)
+            "com.hicloud.android.clone",    // Huawei Clone (transfer)
         )
     }
 }

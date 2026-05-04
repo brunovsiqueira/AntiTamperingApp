@@ -1,21 +1,16 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Keep only the specific entry points referenced via reflection or JNI.
+# Everything else gets obfuscated by R8.
+# Source: https://developer.android.com/topic/performance/app-optimization/keep-rule-examples
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# JNI: native method binding requires exact class+method names
+-keepclasseswithmembernames class com.bruno.antitamperingapp.detection.detectors.ArtMethodChecker {
+    native <methods>;
+}
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Reflection: SystemProperties accessed via Class.forName
+-keep class android.os.SystemProperties { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Reflection: ActivityThread accessed via Class.forName in ArtMethodChecker
+-keep class android.app.ActivityThread {
+    static android.app.ActivityThread currentActivityThread();
+}
