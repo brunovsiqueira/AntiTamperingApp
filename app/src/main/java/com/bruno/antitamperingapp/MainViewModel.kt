@@ -7,6 +7,7 @@ import com.bruno.antitamperingapp.detection.DetectionEngine
 import com.bruno.antitamperingapp.detection.TamperVerdict
 import com.bruno.antitamperingapp.detection.detectors.CloningDetector
 import com.bruno.antitamperingapp.detection.detectors.EmulatorDetector
+import com.bruno.antitamperingapp.detection.detectors.HookingDetector
 import com.bruno.antitamperingapp.detection.detectors.IntegrityDetector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,7 +28,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // For production: use Play App Signing key from Play Console.
             expectedSigningCertSha256 = "f9c0679ec146e15dcaab36279624b851b4b74dac0a393a95735912b6cc719291",
         ))
-        // Future: .addDetector(HookingDetector())
+        .addDetector(HookingDetector())
         .build()
 
     private val _uiState = MutableStateFlow<ScanState>(ScanState.Idle)
