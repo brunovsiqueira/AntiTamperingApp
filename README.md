@@ -4,20 +4,17 @@ Runtime environment anomaly detection module for Android. Detects emulators, app
 
 ## Requirements
 
-- **Android Studio** Meerkat (2025.1+) or newer
 - **JDK** 11+
 - **Android SDK** 36 (compileSdk)
-- **NDK** (installed via SDK Manager — needed for ArtMethod native check)
-- **CMake** 3.22.1+ (installed via SDK Manager)
+- **NDK** and **CMake** 3.22.1+ (for ArtMethod native check)
 - **Min SDK** 24 (Android 7.0)
 
-### Installing NDK and CMake
+Android Studio is optional — the project builds entirely via Gradle command line.
 
-In Android Studio: **Settings > Languages & Frameworks > Android SDK > SDK Tools** — check **NDK (Side by side)** and **CMake**, then click Apply.
+### Installing SDK dependencies
 
-Or via command line:
 ```bash
-sdkmanager "ndk;27.0.12077973" "cmake;3.22.1"
+sdkmanager "platforms;android-36" "ndk;27.0.12077973" "cmake;3.22.1" "build-tools;36.0.0"
 ```
 
 ## Build
