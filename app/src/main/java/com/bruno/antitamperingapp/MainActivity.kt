@@ -210,8 +210,14 @@ private fun VerdictHeader(verdict: TamperVerdict) {
                 color = animatedColor,
             )
             Spacer(Modifier.height(4.dp))
+            val detectedCount = verdict.results.values.count { it.detected }
+            val totalCount = verdict.results.size
             Text(
-                text = "Tampering likelihood: ${(animatedScore * 100).toInt()}%",
+                text = when (verdict.status) {
+                    TamperStatus.TAMPERED -> "$detectedCount of $totalCount categories flagged"
+                    TamperStatus.WARNING -> "Some suspicious signals detected"
+                    TamperStatus.SECURE -> "No anomalies detected"
+                },
                 style = MaterialTheme.typography.bodyLarge,
             )
             Spacer(Modifier.height(8.dp))
@@ -259,8 +265,7 @@ private fun CategoryCard(category: DetectionCategory, result: DetectionResult) {
             }
 
             Text(
-                text = "Tampering likelihood: ${(result.confidence * 100).toInt()}% | " +
-                    "Evidence: ${suspicious.size} suspicious, ${clean.size} clean",
+                text = "Evidence: ${suspicious.size} suspicious, ${clean.size} clean",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),

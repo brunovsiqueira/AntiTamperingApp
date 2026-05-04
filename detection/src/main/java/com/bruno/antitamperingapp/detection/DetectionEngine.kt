@@ -41,8 +41,9 @@ class DetectionEngine private constructor(
 
         val results = categoryResults.associate { it.first to it.second }
         val allErrors = results.values.flatMap { it.errors }
-        val overallScore = computeOverallScore(results)
-        val status = classifyStatus(overallScore)
+        val anyDetected = results.values.any { it.detected }
+        val overallScore = if (anyDetected) 1.0f else computeOverallScore(results)
+        val status = if (anyDetected) TamperStatus.TAMPERED else classifyStatus(overallScore)
         val durationMs = System.currentTimeMillis() - startTime
 
         val verdict = TamperVerdict(
