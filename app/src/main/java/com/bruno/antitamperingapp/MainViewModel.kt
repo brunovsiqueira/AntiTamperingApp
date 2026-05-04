@@ -22,6 +22,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // SHA-256 of our debug signing certificate.
             // Extracted via: apksigner verify --print-certs app-debug.apk
             // For production: use Play App Signing key from Play Console.
+            // SHA-256 of our debug signing certificate.
+            // Extracted via: apksigner verify --print-certs app-debug.apk
+            // For production: use Play App Signing key from Play Console.
             expectedSigningCertSha256 = "f9c0679ec146e15dcaab36279624b851b4b74dac0a393a95735912b6cc719291",
         ))
         // Future: .addDetector(HookingDetector())
