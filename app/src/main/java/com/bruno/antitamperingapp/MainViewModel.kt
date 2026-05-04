@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bruno.antitamperingapp.detection.DetectionEngine
 import com.bruno.antitamperingapp.detection.TamperVerdict
+import com.bruno.antitamperingapp.detection.util.DetectionLogger
 import com.bruno.antitamperingapp.detection.detectors.CloningDetector
 import com.bruno.antitamperingapp.detection.detectors.EmulatorDetector
 import com.bruno.antitamperingapp.detection.detectors.HookingDetector
@@ -15,6 +16,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+
+    init {
+        DetectionLogger.enabled = BuildConfig.DEBUG
+    }
 
     private val _uiState = MutableStateFlow<ScanState>(ScanState.Idle)
     val uiState: StateFlow<ScanState> = _uiState.asStateFlow()

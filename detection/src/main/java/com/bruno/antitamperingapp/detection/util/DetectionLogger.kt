@@ -7,18 +7,29 @@ import com.bruno.antitamperingapp.detection.TamperVerdict
 /**
  * Centralized logging for the detection module.
  *
- * Uses Android's [Log] with a consistent tag prefix so all detection logs
- * can be filtered with: `adb logcat -s TamperDetection`
+ * Logging is **disabled by default** for security — detection details in logcat
+ * are visible to any app on the device and expose which checks are active.
+ * Enable only during development via [enabled] = true.
+ *
+ * Filter: `adb logcat -s TamperDetection`
  */
 object DetectionLogger {
+
+    /**
+     * Set to true to enable detection logs. Default: false (silent in production).
+     * Typically set from the app module: `DetectionLogger.enabled = BuildConfig.DEBUG`
+     */
+    var enabled: Boolean = false
 
     private const val TAG = "TamperDetection"
 
     fun detectorStarted(detectorName: String) {
+        if (!enabled) return
         Log.d(TAG, "[$detectorName] Starting detection...")
     }
 
     fun detectorCompleted(detectorName: String, result: DetectionResult, durationMs: Long) {
+        if (!enabled) return
         val status = if (result.detected) "DETECTED" else "CLEAN"
         Log.i(
             TAG,
@@ -35,10 +46,12 @@ object DetectionLogger {
     }
 
     fun engineStarted(detectorCount: Int) {
+        if (!enabled) return
         Log.i(TAG, "Detection engine started with $detectorCount detectors")
     }
 
     fun verdictProduced(verdict: TamperVerdict) {
+        if (!enabled) return
         Log.i(
             TAG,
             "VERDICT: ${verdict.status.displayName} " +

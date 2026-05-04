@@ -61,6 +61,7 @@ internal class ArtMethodChecker {
             )
         }
 
+        @Suppress("PrivateApi")
         return try {
             // ActivityThread.currentActivityThread() is called frequently by the Android
             // framework during normal execution, so its hotness_count should be > 0.
