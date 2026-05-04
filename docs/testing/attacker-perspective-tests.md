@@ -91,6 +91,38 @@ Attempt to make all 4 detectors return CLEAN on a tampered environment (emulator
 4. **Custom QEMU with realistic sensor simulation** — would defeat sensor noise analysis. Very high effort.
 5. **Hooking the integrity check itself** — find `computeConfidence()` in memory, patch it to always return 0. Requires R8 deobfuscation + method address resolution.
 
+## Test 4: Full Repackaging Attack (apktool + re-sign)
+
+Following the attack model from "You Shall not Repackage" (Merlo et al., 2021), Steps 7-11:
+
+**Step 7 — Decompile:** `apktool d app-debug.apk`
+- All class names visible: `EmulatorDetector`, `CloningDetector`, etc.
+- All detection strings visible: "ranchu", "Goldfish", "frida"
+- Signing certificate hash visible in plaintext in `MainViewModel.smali`
+- Note: This is a debug build (R8 disabled). Release builds would obfuscate.
+
+**Step 8 — Static analysis:** Attacker can identify all detection points from smali code. Class names, check constants, and thresholds are all readable.
+
+**Step 9 — Neutralize:** Skipped (testing if signature check alone catches repackaging without removing detection code).
+
+**Step 10 — Modify:** Changed app name from "AntiTamperingApp" to "HACKED_APP" in strings.xml (simulating malicious modification).
+
+**Step 11 — Rebuild and re-sign:**
+```bash
+apktool b decompiled -o repackaged-unsigned.apk
+keytool -genkeypair -keystore attacker.keystore -alias attacker ...
+zipalign -f 4 repackaged-unsigned.apk repackaged-aligned.apk
+apksigner sign --ks attacker.keystore repackaged-aligned.apk
+```
+
+**Result:** TAMPERED 100% — `integrity_signature` hard signal fired immediately.
+- Original cert: `f9c0679ec146e15dcaab36279624b851b4b74dac0a393a95735912b6cc719291`
+- Attacker cert: `6e5520a3b1a5cce074ca7283e54b28a875424836124fd8c3418d7c63d7f48230`
+
+**What this proves:** Even if the attacker doesn't touch the detection code at all, the act of re-signing with a different key is caught by the signature check. This is the strongest integrity signal — cryptographically impossible to forge without the original private key.
+
+**What an attacker would need to do next:** Find the expected hash in smali (`f9c0679e...`), replace it with their own cert hash, rebuild again. This would bypass the signature check — but requires the attacker to identify AND modify the specific smali instruction. R8 obfuscation in release builds makes this significantly harder.
+
 ## Conclusion
 
 Our detection has 5 resilient checks that survive even a sophisticated Frida-based attack. The remaining checks (Build properties, file paths, etc.) catch unsophisticated attacks and raise the cost for sophisticated ones. The defense-in-depth approach means an attacker must bypass ALL layers simultaneously — and even then, the hardware-based (sensor noise), architecture-based (rwxp), and crypto-based (signing certificate) checks remain standing.
