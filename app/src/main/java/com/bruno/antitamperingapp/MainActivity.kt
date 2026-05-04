@@ -61,7 +61,8 @@ class MainActivity : ComponentActivity() {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     DashboardScreen(
                         state = state,
-                        onScanClick = { viewModel.runScan() },
+                        onFastScanClick = { viewModel.runFastScan() },
+                        onThoroughScanClick = { viewModel.runThoroughScan() },
                         modifier = Modifier.padding(innerPadding),
                     )
                 }
@@ -73,7 +74,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun DashboardScreen(
     state: ScanState,
-    onScanClick: () -> Unit,
+    onFastScanClick: () -> Unit,
+    onThoroughScanClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -100,12 +102,7 @@ private fun DashboardScreen(
         item {
             when (state) {
                 is ScanState.Idle -> {
-                    Button(
-                        onClick = onScanClick,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Run Security Scan")
-                    }
+                    ScanButtons(onFastScanClick, onThoroughScanClick)
                 }
                 is ScanState.Scanning -> {
                     Column(
@@ -120,12 +117,7 @@ private fun DashboardScreen(
                 is ScanState.Complete -> {
                     VerdictHeader(state.verdict)
                     Spacer(Modifier.height(12.dp))
-                    Button(
-                        onClick = onScanClick,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Re-scan")
-                    }
+                    ScanButtons(onFastScanClick, onThoroughScanClick)
                 }
             }
         }
@@ -174,6 +166,36 @@ private fun DashboardScreen(
             }
         }
     }
+}
+
+@Composable
+private fun ScanButtons(
+    onFastScanClick: () -> Unit,
+    onThoroughScanClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Button(
+            onClick = onFastScanClick,
+            modifier = Modifier.weight(1f),
+        ) {
+            Text("Fast Scan")
+        }
+        Button(
+            onClick = onThoroughScanClick,
+            modifier = Modifier.weight(1f),
+        ) {
+            Text("Deep Scan")
+        }
+    }
+    Text(
+        text = "Fast: instant checks only. Deep: includes ~2s sensor noise analysis.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 4.dp),
+    )
 }
 
 @Composable
