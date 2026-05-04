@@ -185,12 +185,18 @@ adb logcat -s SafeExec                # Error handling / defensive wrapper
 
 ## Detection Summary
 
-| Detector | Checks | Hard Signals |
-|----------|--------|-------------|
-| **EmulatorDetector** | 9 | Build.HARDWARE=ranchu, sensor "Goldfish", GL "Android Emulator", ro.kernel.qemu=1 |
-| **CloningDetector** | 7 | Foreign package in data dir, APK from /data/data/, foreign paths in /proc/self/maps, ArtMethod hotness_count=0 |
-| **IntegrityDetector** | 4 | Signing certificate SHA-256 mismatch |
-| **HookingDetector** | 5 | Hooking libraries in /proc/self/maps, rwxp memory segments |
+Anti-tampering techniques fall into two categories ([Merlo et al., 2021](https://arxiv.org/abs/2009.04718)):
+- **Repackaging detection**: recognizing that the app has been modified or is running in an abnormal environment
+- **Anti-repackaging**: inserting controls so a repackaged version would not work properly
+
+Our 4 detectors are all **runtime repackaging detection** — they observe the environment and report findings. They do not block or alter app behavior (response strategy is left to the SDK consumer).
+
+| Detector | Category | Checks | Hard Signals |
+|----------|----------|--------|-------------|
+| **EmulatorDetector** | Environment detection | 9 | Build.HARDWARE=ranchu, sensor "Goldfish", GL "Android Emulator", ro.kernel.qemu=1 |
+| **CloningDetector** | Environment detection | 7 | Foreign package in data dir, APK from /data/data/, foreign paths in /proc/self/maps, ArtMethod hotness_count=0 |
+| **IntegrityDetector** | Repackaging detection | 4 | Signing certificate SHA-256 mismatch |
+| **HookingDetector** | Instrumentation detection | 5 | Hooking libraries in /proc/self/maps, rwxp memory segments |
 
 **Total: 25 checks** across 4 categories with two-tier scoring (hard signals = instant 100%, soft signals = weighted scoring).
 
