@@ -2,6 +2,90 @@
 
 Este documento NÃO vai para o deliverable. É para estudo pessoal.
 
+---
+
+## PLANO DE ESTUDO (5-6h)
+
+### Hora 1: Entender o que Incognia quer ouvir
+- Ler esta seção inteira (CONTEXTO INCOGNIA) + a seção de Leitura Recomendada
+- Frase-chave para usar no início da entrevista: **"tamper detection é a camada que torna todos os outros sinais confiáveis"** — isso é literalmente o framing deles no blog
+- Ler: https://incognia.com/device-tamper-detection (o que eles oferecem como produto)
+
+### Hora 2: Dominar a arquitetura e scoring
+- Blocos 1 e 2 abaixo — ler cada P/R em voz alta
+- Abrir `DetectionEngine.kt`, `TamperDetector.kt`, `DetectionResult.kt` no Android Studio enquanto lê
+- Praticar desenhar a arquitetura de memória (DetectionEngine → Builder → async detectores → verdict)
+
+### Hora 3: Dominar os detectors (EmulatorDetector + CloningDetector)
+- Blocos 3 e 4 abaixo
+- Abrir `EmulatorDetector.kt` e `CloningDetector.kt` — navegar por cada check
+- A história do ArtMethod é o diferencial: crash → signal handler → jmethodID indireto → funciona dentro do container
+- Ler Mascara §IX-B: https://ar5iv.labs.arxiv.org/html/2010.10639#S9.SS2
+
+### Hora 4: Dominar IntegrityDetector + HookingDetector + Root Decision
+- Blocos 5, 6, 7 abaixo
+- O rwxp check é o mais forte contra Frida — entender por quê
+- Saber explicar por que NÃO implementou root (ADR-008) e como faria
+
+### Hora 5: Estudar os papers (seções específicas)
+- "You Shall not Repackage" §3 (Attack Model) + §4-5 (6 esquemas e bypasses): https://ar5iv.labs.arxiv.org/html/2009.04718
+- "Mascara" §VIII (18 mecanismos bypassados) + §IX-B (ArtMethod): https://ar5iv.labs.arxiv.org/html/2010.10639
+- OWASP MASVS-RESILIENCE: https://mas.owasp.org/MASVS/controls/MASVS-RESILIENCE-2/
+
+### Hora 6: Preparação estratégica
+- Reler Bloco 8 (testing) e Bloco 9 (perguntas difíceis)
+- Praticar o script do Claude/AI (ver seção SCRIPT CLAUDE abaixo)
+- Dry run 10min: compartilhar tela e apresentar README → arquitetura → 1 detector → teste Frida
+- Preparar 3 perguntas para fazer a ELES (ver seção PERGUNTAS PARA ELES abaixo)
+
+---
+
+## CONTEXTO INCOGNIA — O que eles valorizam
+
+**SDK deles:** 415KB Android, 0.5%/dia bateria, 66ms processamento. Se seu SDK é 9MB debug / 968KB release, o release está no ballpark.
+
+**Frase do job description deles:** *"executamos código nos aplicativos de terceiros... extremo cuidado e controle rigoroso de recursos (threads, memória, processamento)"*. Isso = tudo que fizemos com coroutines, SafeExec, fail-open, sensor sampling opcional.
+
+**O que eles detectam (público):** emuladores, location spoofing, app cloners, app tampering tools, image injectors, remote-access tools (AnyDesk/TeamViewer). Nós cobrimos os 4 primeiros.
+
+**Stat deles:** 5% dos devices flagged como risky têm pelo menos 1 issue de integridade. Devices risky são 5x mais propensos a ter issue de integridade.
+
+**Framing para usar:** "Tamper detection é a foundation — se o ambiente não é confiável, os sinais de identidade e localização vindos dele também não são."
+
+**Quem pode te entrevistar:**
+- **Gabriel Falcone** (VP Mobile, co-founder) — visão de produto e arquitetura
+- **Pedro Atanásio** (Staff, C/C++/Java) — se ele estiver, perguntas de NDK/JNI são garantidas. Bom pra nós: temos ArtMethod em C
+- **Thiago Figueredo Cardoso** (ARM disassembly background) — reverse engineering profundo
+
+## O QUE TEMOS QUE A MAIORIA DOS CANDIDATOS NÃO TERIA
+
+O research lista como "biggest gap" que candidatos não têm NDK. **Nós temos.** Isso muda a dinâmica:
+
+| "Red flag" do research | Nosso status |
+|----------------------|-------------|
+| "No native code — biggest gap" | **Temos:** ArtMethod em C com JNI + SIGSEGV handler |
+| "No bypass testing" | **Temos:** 3 Frida scripts + repackaging attack com apktool |
+| "Boolean tamper detection" | **Temos:** multi-signal weighted scoring com two-tier |
+| "No multi-signal scoring" | **Temos:** hard signals + soft scoring ponderado |
+| "Hardcoded secrets grep-able" | **Parcial:** R8 obfusca internals no release, mas strings visíveis (limitação R8) |
+| "SafetyNet" | **Não usamos** — sabemos que foi descontinuado May 2025 |
+| "No false positive awareness" | **Temos:** GMS emoji font fix, extensão-based filter, 16 stores na whitelist |
+| "Crash on detection" | **Não crashamos** — fail-open com SafeExec |
+
+## SCRIPT CLAUDE/AI — Preparar esta resposta EXATA
+
+Se perguntarem "usou AI?":
+
+> "Sim, usei Claude como pair programmer. Eu defini a arquitetura (módulo separado, Strategy pattern, Builder, two-tier scoring), escolhi quais sinais implementar e por quê (baseado em papers como Mascara e 'You Shall not Repackage'), e validei tudo em devices reais e emuladores. Claude me ajudou a escrever o código mais rápido, mas cada decisão de design é minha — posso explicar o trade-off de cada uma. Onde fiquei surpreso foi com o ArtMethod: implementei baseado no paper Mascara, mas descobri na prática que Samsung usa jmethodID indireto — isso não está documentado em nenhum paper. Essa descoberta é 100% do processo de teste real, não de AI."
+
+**Se pedirem para modificar código ao vivo:** estar preparado para adicionar um check novo (ex: `Build.HOST`) no EmulatorDetector em 2 minutos. Praticar isso.
+
+## PERGUNTAS PARA FAZER A ELES
+
+1. "Como o SDK da Incognia atualiza regras de detecção sem update do app? Remote config, scoring server-side, ou algo diferente?"
+2. "Qual é o target de false positive rate para um sinal de tampering que pode ser 'blocking' vs um que só pode ser 'observing'? Como vocês graduam um detector?"
+3. "Onde está o foco atual do time — fechar o gap em virtualizers como VirtualXposed, ou em combinações emergentes como cloner-on-emulator?"
+
 ## Leitura recomendada (papers)
 
 Ler pelo menos as seções indicadas de cada paper:
