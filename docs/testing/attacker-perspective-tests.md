@@ -145,6 +145,110 @@ Decompiled the release APK (`assembleRelease`, R8 enabled) to compare what an at
 - App rules: keep only reflection + JNI entry points
 - Source: https://developer.android.com/topic/performance/app-optimization/library-optimization
 
+## Test 6: Full Static Repackaging Attack — "You Shall not Repackage" Steps 7-12
+
+Following the complete attack model from Merlo et al. (arXiv 2009.04718, §3 Steps 7-12) against the **release APK** (R8 enabled). Goal: make the repackaged app show SECURE on an emulator.
+
+### What the attacker did (5 minutes total)
+
+**Step 7 — Decompile** (1 second):
+```bash
+apktool d app-release.apk -o decompiled    # 1828 smali files
+```
+
+**Step 8 — Static analysis** (<1 minute):
+```bash
+grep -rn "ranchu" decompiled/smali/           # 2 hits — found emulator checks
+grep -rn "f9c0679e" decompiled/smali/         # found cert hash in a10.smali:169
+grep -rn "0x3ee66666" decompiled/smali/       # found 0.45f TAMPERED threshold
+```
+
+Despite R8 obfuscation (classes renamed to `a10.smali`, `vm.smali`, etc.), string constants remain in plaintext. The attacker found:
+- Detection strings ("ranchu", "Goldfish", "frida") — all readable
+- Signing certificate SHA-256 hash — in `a10.smali` (obfuscated filename, but string searchable)
+- Scoring thresholds — `0x3ee66666` (0.45f) and `0x3e4ccccd` (0.2f) as float constants
+- `classifyStatus()` method with the score→status conversion logic
+- Native library `libantitamper_native.so` in `lib/arm64-v8a/`
+
+**Step 9 — Patch smali** (~2 minutes, two patches):
+
+Patch 1: `classifyStatus()` → always return SECURE
+```smali
+# BEFORE: comparison logic with TAMPERED/WARNING/SECURE branches
+# AFTER:
+.method public static final access$classifyStatus(...)
+    sget-object p0, Lcom/.../TamperStatus;->SECURE:Lcom/.../TamperStatus;
+    return-object p0
+.end method
+```
+
+Patch 2: Replace expected cert hash with placeholder
+```bash
+sed -i 's/f9c0679e.../PLACEHOLDER/g' decompiled/smali/a10.smali
+```
+
+**Steps 10-11 — Rebuild, sign, patch cert, rebuild again** (~2 minutes):
+```bash
+apktool b decompiled -o repackaged.apk
+keytool -genkeypair -keystore attacker.jks -alias attacker_key ...
+apksigner sign --ks attacker.jks repackaged.apk
+# Extract attacker cert hash
+ATTACKER_CERT=$(apksigner verify --print-certs repackaged.apk | grep SHA-256 | awk '{print $NF}')
+# Second pass: replace PLACEHOLDER with attacker's actual cert hash
+apktool d repackaged.apk → sed replace → apktool b → sign again
+```
+
+### Result: PARTIALLY FAILED — "Tampered — 2 of 4 categories flagged"
+
+The attacker's APK installed and ran on the emulator. The UI showed:
+
+```
+Status: Tampered
+2 of 4 categories flagged
+EmulatorDetector: DETECTED (14 suspicious signals)
+IntegrityDetector: appears clean (cert hash matches attacker's own)
+```
+
+### What the attacker bypassed
+
+| What | How | Time |
+|------|-----|------|
+| `classifyStatus()` scoring | Replaced method body → always return SECURE | 1 min |
+| Signing certificate check | Two-pass build: placeholder → attacker's real cert hash | 2 min |
+| R8 obfuscation | `grep` finds string constants regardless of class renaming | <1 min |
+
+### What the attacker DID NOT bypass (and why)
+
+| What | Why it survived | What attacker would need to do |
+|------|----------------|-------------------------------|
+| `anyDetected` override in `evaluate()` | The attacker patched `classifyStatus()` but the engine has a SEPARATE check: `if (anyDetected) → score=1.0, status=TAMPERED` (`DetectionEngine.kt:44-46`). This bypass is independent of the scoring logic. | Find and patch the `anyDetected` boolean check in the evaluate coroutine — harder because it's inside a suspend function's state machine (coroutine bytecode is complex smali) |
+| EmulatorDetector hard signals | Each detector has its own `computeConfidence()` with hard signal checks. Patching the engine's classification doesn't affect the detector's internal `detected=true` decision. | Patch each detector individually — 4 separate classes, each with their own hard signal logic |
+| HookingDetector checks | Same as above — independent detector | Same |
+| ArtMethod native code | The `.so` file was copied raw by apktool. Patching native ARM64 code requires IDA Pro/Ghidra + ARM assembly skills — completely different skillset than smali editing | Disassemble `libantitamper_native.so` with Ghidra, find `checkHotnessCount`, NOP the comparison. Requires ARM64 reverse engineering |
+
+### Key insight: defense-in-depth with distributed decision points
+
+The attacker made the most obvious patch (the scoring function) but the architecture has **three independent decision levels**:
+
+1. **Engine level** — `classifyStatus(score)` converts float to enum (PATCHED ✅)
+2. **Engine level** — `anyDetected` boolean override, independent of scoring (NOT PATCHED ❌)
+3. **Detector level** — each detector's own `computeConfidence()` with hard signals (NOT PATCHED ❌)
+
+To fully bypass, the attacker needs to patch ALL THREE levels. Each additional patch point increases the attack surface analysis time and the chance of introducing a bug that crashes the app.
+
+This validates the paper's observation (Merlo et al., §5): *"the try and error cycle"* — the attacker must iterate Steps 7-11 multiple times, testing each patch. Our architecture forces at least 3 iterations of this cycle.
+
+### What a more skilled attacker would do next
+
+1. **Find `anyDetected` in evaluate's coroutine smali** — coroutine state machines are complex in smali (generated by Kotlin compiler), making the boolean check harder to locate than a simple method
+2. **Patch each detector's `computeConfidence`** — 4 patches instead of 1
+3. **OR: patch the `detect()` method of each detector** to always return `DetectionResult.clean()` — but this requires understanding R8-renamed constructors
+4. **OR: use Frida Gadget** (Tactic B) — embed Frida in the APK and hook `DetectionEngine.evaluate()` at Java level to always return a clean verdict. This is actually EASIER than smali patching for a Frida-experienced attacker
+
+### Total attack time: ~5 minutes for partial bypass
+
+A full bypass would require ~15-30 more minutes of analysis to find all decision points. Possible, but not trivial — and every additional patch is another point of failure that could crash the app and alert the user.
+
 ## Conclusion
 
 Our detection has 5 resilient checks that survive even a sophisticated Frida-based attack:
